@@ -14,7 +14,24 @@ fn main() {
     let target = &args[1];
 
     // TODO: Milestone 1: Get the target Process using psutils::get_target()
-    unimplemented!();
+    // unimplemented!();
+    let ret = ps_utils::get_target(&target).expect("Error get target");
+    match ret{
+        Some(proc)=> {
+            println!("Found pid {}", proc.pid);
+            proc.print();
+
+            let childs  =ps_utils::get_child_processes(proc.pid).unwrap();
+            for child in childs {
+                child.print();
+            }
+            std::process::exit(0);
+        },
+        None => {
+            println!("Target \"{}\" did not match any running PIDs or executables", target);
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]

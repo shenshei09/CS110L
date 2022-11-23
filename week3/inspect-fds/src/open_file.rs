@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::collections::hash_map::DefaultHasher;
+//use std::collections::linked_list::Cursor;
 use std::hash::{Hash, Hasher};
 #[allow(unused_imports)] // TODO: delete this line for Milestone 4
 use std::{fmt, fs};
@@ -137,7 +138,16 @@ impl OpenFile {
     #[allow(unused)] // TODO: delete this line for Milestone 4
     pub fn from_fd(pid: usize, fd: usize) -> Option<OpenFile> {
         // TODO: implement for Milestone 4
-        unimplemented!();
+        let path1 = format!("/proc/{}/fd/{}", pid, fd);
+        let path2 = format!("/proc/{}/fdinfo/{}", pid, fd);
+
+        let name = OpenFile::path_to_name(fs::read_link(path1).ok()?.to_str()?);
+
+        let fdinfo = fs::read_to_string(path2).ok()?;
+        let cursor = OpenFile::parse_cursor(fdinfo.as_str())?;
+        let access_mode = OpenFile::parse_access_mode(fdinfo.as_str())?;
+
+        return Some(OpenFile::new(name, cursor, access_mode));
     }
 
     /// This function returns the OpenFile's name with ANSI escape codes included to colorize
