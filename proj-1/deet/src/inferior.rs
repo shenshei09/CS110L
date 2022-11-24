@@ -2,7 +2,11 @@ use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use std::os::unix::process::CommandExt;
 use std::process::Child;
+use std::process::Command;
+
+use crate::dwarf_data::DwarfData;
 
 pub enum Status {
     /// Indicates inferior stopped. Contains the signal that stopped the process, as well as the
@@ -35,11 +39,21 @@ impl Inferior {
     /// an error is encountered.
     pub fn new(target: &str, args: &Vec<String>) -> Option<Inferior> {
         // TODO: implement me!
-        println!(
-            "Inferior::new not implemented! target={}, args={:?}",
-            target, args
-        );
-        None
+        // println!(
+        //     "Inferior::new not implemented! target={}, args={:?}",
+        //     target, args
+        // );
+        // None
+        let mut cmd = Command::new(target);
+        cmd.args(args);
+
+        unsafe {
+            cmd.pre_exec(child_traceme);
+        }
+
+        let child = cmd.spawn().ok()?;
+        let inferior = Inferior { child };
+        Some(inferior)
     }
 
     /// Returns the pid of this inferior.
@@ -59,5 +73,44 @@ impl Inferior {
             }
             other => panic!("waitpid returned unexpected status: {:?}", other),
         })
+    }
+
+    pub fn cont(&self) -> Result<Status, nix::Error> {
+        ptrace::cont(self.pid(), None)?;
+
+        self.wait(None)
+    }
+
+    pub fn kill(&mut self) {
+        self.child.kill().unwrap();
+        self.wait(None).unwrap();
+        println!("Killing running inferior (pid {})", self.pid());
+    }
+
+    pub fn print_backtrace(&self, debug_data: &DwarfData) -> Result<(), nix::Error> {
+        let regs = ptrace::getregs(self.pid())?;
+
+        let mut rip = regs.rip as usize;
+        let mut rbp = regs.rbp as usize;
+
+        loop {
+            let line = debug_data.get_line_from_addr(rip);
+            let func = debug_data.get_function_from_addr(rip);
+
+            match (&line, &func) {
+                (None, None) => println!("unknown func (source file not found)"),
+                (Some(line), None) => println!("unknown func ({})", line),
+                (None, Some(func)) => println!("{} (source file not found)", func),
+                (Some(line), Some(func)) => println!("{} ({})", func, line),
+            }
+
+            if func.is_none() || func == Some("main".to_string()) {
+                break;
+            }
+
+            rip = ptrace::read(self.pid(), (rbp + 8) as ptrace::AddressType)? as usize;
+            rbp = ptrace::read(self.pid(), rbp as ptrace::AddressType)? as usize;
+        }
+        Ok(())
     }
 }

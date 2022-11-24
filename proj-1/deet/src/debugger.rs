@@ -1,5 +1,6 @@
 use crate::debugger_command::DebuggerCommand;
-use crate::inferior::Inferior;
+use crate::dwarf_data::{DwarfData, Error as DwarfError};
+use crate::inferior::{Inferior, Status};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
@@ -8,6 +9,7 @@ pub struct Debugger {
     history_path: String,
     readline: Editor<()>,
     inferior: Option<Inferior>,
+    debug_data: DwarfData
 }
 
 impl Debugger {
@@ -20,11 +22,24 @@ impl Debugger {
         // Attempt to load history from ~/.deet_history if it exists
         let _ = readline.load_history(&history_path);
 
+        let debug_data = match DwarfData::from_file(target) {
+            Ok(val) => val,
+            Err(DwarfError::ErrorOpeningFile) => {
+                println!("Could not open file {}", target);
+                std::process::exit(1);
+            }
+            Err(DwarfError::DwarfFormatError(err)) => {
+                println!("Could not debugging symbols from {}: {:?}", target, err);
+                std::process::exit(1);
+            }
+        };
+
         Debugger {
             target: target.to_string(),
             history_path,
             readline,
             inferior: None,
+            debug_data,
         }
     }
 
@@ -32,18 +47,35 @@ impl Debugger {
         loop {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => {
+                    self.clear();
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
                         self.inferior = Some(inferior);
                         // TODO (milestone 1): make the inferior run
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
                         // to the Inferior object
+                        self.cont();
                     } else {
                         println!("Error starting subprocess");
                     }
                 }
                 DebuggerCommand::Quit => {
+                    self.clear();
                     return;
+                }
+                DebuggerCommand::Cont => {
+                    if self.inferior.is_none() {
+                        println!("Error: there is no process running!");
+                    } else {
+                        self.cont();
+                    }
+                }
+                DebuggerCommand::Back => {
+                    if self.inferior.is_none() {
+                        println!("Error: there is no process running!");
+                    } else {
+                        self.inferior.as_mut().unwrap().print_backtrace(&self.debug_data).unwrap();
+                    }
                 }
             }
         }
@@ -87,6 +119,29 @@ impl Debugger {
                     }
                 }
             }
+        }
+    }
+
+    fn cont(&mut self) {
+        match self.inferior.as_mut().unwrap().cont().unwrap() {
+            Status::Exited(exit_code) => {
+                println!("Child exited (status {})", exit_code);
+                self.inferior = None;
+            }
+            Status::Signaled(signal) => {
+                println!("Child exited due to signal {}", signal);
+                self.inferior = None;
+            }
+            Status::Stopped(signal, rip) => {
+                println!("Child stopped by signal {} at address {:#x}", signal, rip)
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        if self.inferior.is_some() {
+            self.inferior.as_mut().unwrap().kill();
+            self.inferior = None;
         }
     }
 }
