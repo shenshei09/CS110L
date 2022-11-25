@@ -2,11 +2,17 @@ use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use std::mem::size_of;
 use std::os::unix::process::CommandExt;
 use std::process::Child;
 use std::process::Command;
+use std::collections::HashMap;
 
 use crate::dwarf_data::DwarfData;
+
+fn align_addr_to_word(addr: usize) -> usize {
+    addr & (-(size_of::<usize>() as isize) as usize)
+}
 
 pub enum Status {
     /// Indicates inferior stopped. Contains the signal that stopped the process, as well as the
@@ -37,7 +43,7 @@ pub struct Inferior {
 impl Inferior {
     /// Attempts to start a new inferior process. Returns Some(Inferior) if successful, or None if
     /// an error is encountered.
-    pub fn new(target: &str, args: &Vec<String>) -> Option<Inferior> {
+    pub fn new(target: &str, args: &Vec<String>, breakpoints: &mut HashMap<usize, u8>) -> Option<Inferior> {
         // TODO: implement me!
         // println!(
         //     "Inferior::new not implemented! target={}, args={:?}",
@@ -52,7 +58,22 @@ impl Inferior {
         }
 
         let child = cmd.spawn().ok()?;
-        let inferior = Inferior { child };
+        let mut inferior = Inferior { child };
+
+        //for bp in breakpoints {
+        //    while !inferior.write_byte(*bp, 0xcc).is_ok() {}
+        //}
+        let bps = breakpoints.clone();
+        for bp in bps.keys() {
+            match inferior.write_byte(*bp, 0xcc) {
+                Ok(instr) => {
+                    breakpoints.insert(*bp, instr);
+                }
+                Err(_) => {
+                    println!("Invalid breakpoint address {:#x}", bp);
+                }    
+            }
+        }
         Some(inferior)
     }
 
@@ -75,9 +96,30 @@ impl Inferior {
         })
     }
 
-    pub fn cont(&self) -> Result<Status, nix::Error> {
-        ptrace::cont(self.pid(), None)?;
+    pub fn cont(&mut self, breakpoints: &HashMap<usize, u8>) -> Result<Status, nix::Error> {
+        let mut regs = ptrace::getregs(self.pid())?;        
+        let rip = regs.rip as usize;
 
+        if let Some(instr) = breakpoints.get(&(rip - 1)) {
+            println!("Stopped at a breakpoint");
+
+            self.write_byte(rip - 1, *instr)?;
+            regs.rip = (rip - 1) as u64;
+
+            ptrace::setregs(self.pid(), regs).unwrap();
+            ptrace::step(self.pid(), None).unwrap();
+
+            match self.wait(None).unwrap() {
+                Status::Exited(exit_code) => return Ok(Status::Exited(exit_code)), 
+                Status::Signaled(signal) => return Ok(Status::Signaled(signal)),
+                Status::Stopped(_, _) => {
+                    // restore 0xcc in the breakpoint location
+                    self.write_byte(rip - 1, 0xcc).unwrap();
+                }
+            }
+        }
+        
+        ptrace::cont(self.pid(), None)?;
         self.wait(None)
     }
 
@@ -112,5 +154,20 @@ impl Inferior {
             rbp = ptrace::read(self.pid(), rbp as ptrace::AddressType)? as usize;
         }
         Ok(())
+    }
+
+    pub fn write_byte(&mut self, addr: usize, val: u8) -> Result<u8, nix::Error> {
+        let aligned_addr = align_addr_to_word(addr);
+        let byte_offset = addr - aligned_addr;
+        let word = ptrace::read(self.pid(), aligned_addr as ptrace::AddressType)? as u64;
+        let orig_byte = (word >> 8 * byte_offset) & 0xff;
+        let masked_word = word & !(0xff << 8 * byte_offset);
+        let updated_word = masked_word | ((val as u64) << 8 * byte_offset);
+        ptrace::write(
+            self.pid(),
+            aligned_addr as ptrace::AddressType,
+            updated_word as *mut std::ffi::c_void,
+        )?;
+        Ok(orig_byte as u8)
     }
 }
