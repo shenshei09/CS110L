@@ -126,55 +126,6 @@ impl Debugger {
                             }
                         }
                     }
-                    /*
-                    let address;
-                    if pos.starts_with("*") {
-                        if let Some(address) = self.parse_address(&pos[1..]) {
-                            address = address;
-                        } else {
-                            println!("Invalid address");
-                            continue;
-                        }
-                    } else if let Some(line) = usize::from_str_radix(&pos, 10).ok() {
-                        if let Some(address) = self.debug_data.get_addr_for_line(None, line) {
-                            address = address;
-                        } else {
-                            println!("Invalid line number");
-                            continue;
-                        }
-                    } else if let Some(address) = self.debug_data.get_addr_for_function(None, &pos)
-                    {
-                        address = address;
-                    } else {
-                        println!("Usage: b|break *address|line|func");
-                        continue;
-                    }
-
-                    if self.inferior.is_some() {
-                        if let Some(instruction) = self
-                            .inferior
-                            .as_mut()
-                            .unwrap()
-                            .write_byte(address, 0xcc)
-                            .ok()
-                        {
-                            println!(
-                                "Set breakpoint {} at {:#x}",
-                                self.breakpoints.len(),
-                                address
-                            );
-                            self.breakpoints.insert(address, instruction);
-                        } else {
-                            println!("Invalid breakpoint address {:#x}", address);
-                        }
-                    } else {
-                        println!(
-                            "Set breakpoint {} at {:#x}",
-                            self.breakpoints.len(),
-                            address
-                        );
-                        self.breakpoints.insert(address, 0);
-                    } */
                 }
             }
         }
